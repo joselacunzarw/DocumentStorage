@@ -42,11 +42,16 @@ CHROMA_PATH = "../chroma"
 ```
 
 ## Uso
-
-Para generar la base de datos vectorial a partir de los documentos PDF, ejecuta el script `core.py`:
-
 ```bash
-python core.py
+Para procesar todos los tipos de archivo (comportamiento por defecto):
+python script.py
+
+Para procesar solo archivos .odt:
+python script.py --formats .odt
+
+Para procesar múltiples formatos (por ejemplo, .pdf y .odt):
+python script.py --formats .pdf .odt
+
 ```
 
 El proceso sigue los siguientes pasos:

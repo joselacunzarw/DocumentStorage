@@ -1,4 +1,5 @@
 __pycache__/a_env_vars.cpython-311.pyc
+/env/
 env/Lib/site-packages/distutils-precedence.pth
 env/Lib/site-packages/_distutils_hack/__pycache__/__init__.cpython-311.pyc
 env/Lib/site-packages/_distutils_hack/__pycache__/override.cpython-311.pyc
