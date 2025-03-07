@@ -9,7 +9,13 @@ from langchain_community.vectorstores import Chroma  # DB vectorial Chroma de La
 import os  # Importar módulo os para funcionalidades del sistema operativo
 import shutil  # Importar módulo shutil para operaciones de archivos de alto nivel
 import a_env_vars  # Importar módulo para manejar variables de entorno
+import win32com.client
 from langchain_openai import OpenAIEmbeddings
+from PyPDF2 import PdfReader
+from docx import Document as DocxDocument
+from odf.opendocument import load
+from odf.text import P
+
 #from langchain_ollama import OllamaEmbeddings
 
 
@@ -24,19 +30,95 @@ MAX_BATCH_SIZE = 5461
 os.environ["OPENAI_API_KEY"] = a_env_vars.OPENAI_API_KEY
 
 
+def read_doc(file_path: str) -> str:
+    """Lee un archivo .doc en Windows con Word instalado (PyWin32)."""
+    if not os.path.exists(file_path):
+        print(f"El archivo {file_path} no existe.")
+        return ""
+    try:
+        word = win32com.client.Dispatch("Word.Application")
+        word.Visible = False
+
+        abs_path = os.path.abspath(file_path)
+        abs_path = abs_path.replace('/', '\\')  # Reemplazar barras normales por invertidas
+
+        doc = word.Documents.Open(abs_path, ReadOnly=True)
+        text = doc.Content.Text
+        doc.Close()
+        word.Quit()
+        return text
+    except Exception as e:
+        print(f"Error al procesar el archivo .doc {file_path}: {e}")
+        return ""
+
+def read_pdf(file_path: str) -> str:
+    """Lee un archivo PDF y devuelve su contenido como texto."""
+    with open(file_path, "rb") as file:
+        reader = PdfReader(file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text()
+    return text
+
+def read_docx(file_path: str) -> str:
+    """Lee un archivo .docx y devuelve su contenido como texto."""
+    doc = DocxDocument(file_path)
+    text = ""
+    for paragraph in doc.paragraphs:
+        text += paragraph.text + "\n"
+    return text
+
+def read_odt(file_path: str) -> str:
+    """Lee un archivo .odt y devuelve su contenido como texto."""
+    text = ""
+    try:
+        doc = load(file_path)
+        for paragraph in doc.getElementsByType(P):
+            if paragraph.firstChild is not None:
+                text += paragraph.firstChild.nodeValue + "\n"
+    except Exception as e:
+        print(f"Error al procesar el archivo .odt {file_path}: {e}")
+    return text
+
+def read_txt(file_path: str) -> str:
+    """Lee un archivo .txt y devuelve su contenido como texto."""
+    with open(file_path, "r", encoding="utf-8") as file:
+        return file.read()
+
 def load_documents() -> list[Document]:
-    """
-    Cargar documentos PDF desde el directorio especificado utilizando PyPDFDirectoryLoader.
-    Retorna:
-        Lista de Documentos: Documentos PDF cargados representados como objetos Document de Langchain.
-    """
-    # Inicializar el cargador de PDF con el directorio especificado
-    #document_loader = PyPDFDirectoryLoader(DATA_PATH)
-    document_loader = DirectoryLoader(DATA_PATH, glob="**/*")
-    
-    # Cargar los documentos PDF y retornarlos como una lista de objetos Document
-    print ("Documentos Leidos")
-    return document_loader.load()
+    """Cargar documentos desde un directorio, manejar diferentes tipos de archivos"""
+    documents = []
+    for root, dirs, files in os.walk(DATA_PATH):
+        for file in files:
+            file_path = os.path.join(root, file)
+            try:
+                print(f"Procesando archivo: {file}")
+                content = ""
+                # Leer el contenido según la extensión del archivo
+                if file.endswith('.pdf'):
+                    content = read_pdf(file_path)
+                elif file.endswith('.doc'):
+                    content = read_doc(file_path)    
+                elif file.endswith('.docx'):
+                    content = read_docx(file_path)
+                elif file.endswith('.odt'):
+                    content = read_odt(file_path)
+                elif file.endswith('.txt'):
+                    content = read_txt(file_path)
+                else:
+                    print(f"Formato de archivo no soportado: {file}")
+                    continue
+
+                # Crear un documento para agregarlo al proceso
+                if content:
+                    documents.append(Document(page_content=content, metadata={"source": file_path}))
+            except Exception as e:
+                print(f"Error al procesar el archivo {file_path}: {e}. Se omitirá este archivo.")
+                continue  # Omitir el archivo y continuar con el siguiente
+
+    print(f"Se cargaron {len(documents)} documentos.")
+    return documents
+
 
 def split_text(documents: list[Document]) -> list[Document]:
     """
@@ -98,7 +180,7 @@ def generate_data_store():
     """
     Función para generar una base de datos vectorial en Chroma a partir de documentos.
     """
-    print ("Buscando Documentos"  + str(datetime.now()))
+    print ("Buscando Documentos "  + str(datetime.now()))
     documents = load_documents()  # Cargar documentos desde una fuente
     print ("documentos cargados "  + str(datetime.now()))
     print ("inicio de CHUNKING "  + str(datetime.now()))
