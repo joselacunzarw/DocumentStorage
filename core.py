@@ -7,11 +7,13 @@ from langchain_openai import OpenAIEmbeddings
 from PyPDF2 import PdfReader
 from docx import Document as DocxDocument
 from odf.opendocument import load
-from odf.text import P
+from odf.text import P, H, List, Span
 from langchain.schema import Document
 from langchain_community.vectorstores import Chroma
 import a_env_vars
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+import zipfile
+import xml.etree.ElementTree as ET
 
 # Variables globales
 EMBEDDING_MODEL_NAME = a_env_vars.EMBEDDING_MODEL_NAME
@@ -57,17 +59,95 @@ def read_docx(file_path: str) -> str:
         text += paragraph.text + "\n"
     return text
 
-# Función de lectura para .odt
-def read_odt(file_path: str) -> str:
-    text = ""
+
+
+def extract_text_from_node(node):
+    """Extrae texto de un nodo XML incluyendo sus hijos."""
+    if node is None:
+        return ""
+    
+    text_parts = []
+    if node.text:
+        text_parts.append(node.text.strip())
+
+    for child in node:
+        text_parts.append(extract_text_from_node(child))
+
+    if node.tail:
+        text_parts.append(node.tail.strip())
+
+    return " ".join(filter(None, text_parts))
+
+
+def read_odt(file_path):
+    """Lee un archivo .odt y extrae su contenido de texto de manera robusta."""
     try:
-        doc = load(file_path)
-        for paragraph in doc.getElementsByType(P):
-            if paragraph.firstChild is not None and hasattr(paragraph.firstChild, 'nodeValue'):
-                text += paragraph.firstChild.nodeValue + "\n"
+        print(f"📂 Abriendo archivo: {file_path}")
+
+        # Abrimos el archivo ODT como ZIP
+        with zipfile.ZipFile(file_path, 'r') as z:
+            # Extraemos el contenido principal donde está el texto
+            with z.open('content.xml') as content_file:
+                xml_content = content_file.read()
+
+        print("✅ XML extraído correctamente.")
+
+        # Parseamos el XML
+        root = ET.fromstring(xml_content)
+
+        # Espacios de nombres de OpenDocument
+        ns = {
+            'text': 'urn:oasis:names:tc:opendocument:xmlns:text:1.0',
+            'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
+            'table': 'urn:oasis:names:tc:opendocument:xmlns:table:1.0'
+        }
+
+        extracted_text = []
+
+        # Extraer texto de párrafos (<text:p>)
+        for elem in root.findall('.//text:p', ns):
+            text_content = extract_text_from_node(elem)
+            if text_content:
+                extracted_text.append(text_content)
+
+        # Extraer texto de encabezados (<text:h>)
+        for elem in root.findall('.//text:h', ns):
+            header_content = extract_text_from_node(elem)
+            if header_content:
+                extracted_text.append(header_content)
+            else:
+                print(f"⚠️ Encabezado sin texto en {file_path}")
+
+        # Extraer texto de tablas (<table:table>)
+        for table in root.findall('.//table:table', ns):
+            for row in table.findall('.//table:table-row', ns):
+                row_text = []
+                for cell in row.findall('.//table:table-cell', ns):
+                    cell_text = extract_text_from_node(cell)
+                    if cell_text:
+                        row_text.append(cell_text)
+                if row_text:
+                    extracted_text.append(" | ".join(row_text))
+
+        # Si no encontramos texto, inspeccionamos otros nodos
+        if not extracted_text:
+            print(f"⚠️ No se encontró texto en {file_path}. Inspeccionando otros nodos posibles...")
+
+            # Buscamos nodos adicionales que contengan texto
+            for elem in root.iter():
+                node_text = extract_text_from_node(elem)
+                if node_text:
+                    print(f"🔍 Nodo {elem.tag} -> {node_text}")
+                    extracted_text.append(node_text)
+
+        # Retornamos el texto completo
+        return '\n'.join(extracted_text)
+
     except Exception as e:
-        print(f"Error al procesar el archivo .odt {file_path}: {e}")
-    return text
+        print(f"❌ Error al leer el archivo .odt {file_path}: {e}")
+        return ""
+
+
 
 # Función de lectura para .txt
 def read_txt(file_path: str) -> str:
@@ -107,6 +187,8 @@ def load_documents(file_types=None) -> list[Document]:
                 # Crear un documento para agregarlo al proceso
                 if content:
                     documents.append(Document(page_content=content, metadata={"source": file_path}))
+                else:
+                    print(f"Error: El archivo {file_path} no tiene contenido válido.")
             except Exception as e:
                 print(f"Error al procesar el archivo {file_path}: {e}. Se omitirá este archivo.")
                 continue  # Omitir el archivo y continuar con el siguiente
