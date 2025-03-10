@@ -14,6 +14,7 @@ import a_env_vars
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import zipfile
 import xml.etree.ElementTree as ET
+import time
 
 # Variables globales
 EMBEDDING_MODEL_NAME = a_env_vars.EMBEDDING_MODEL_NAME
@@ -82,7 +83,6 @@ def extract_text_from_node(node):
 def read_odt(file_path):
     """Lee un archivo .odt y extrae su contenido de texto de manera robusta."""
     try:
-        print(f"📂 Abriendo archivo: {file_path}")
 
         # Abrimos el archivo ODT como ZIP
         with zipfile.ZipFile(file_path, 'r') as z:
@@ -90,7 +90,6 @@ def read_odt(file_path):
             with z.open('content.xml') as content_file:
                 xml_content = content_file.read()
 
-        print("✅ XML extraído correctamente.")
 
         # Parseamos el XML
         root = ET.fromstring(xml_content)
@@ -115,8 +114,6 @@ def read_odt(file_path):
             header_content = extract_text_from_node(elem)
             if header_content:
                 extracted_text.append(header_content)
-            else:
-                print(f"⚠️ Encabezado sin texto en {file_path}")
 
         # Extraer texto de tablas (<table:table>)
         for table in root.findall('.//table:table', ns):
@@ -131,8 +128,6 @@ def read_odt(file_path):
 
         # Si no encontramos texto, inspeccionamos otros nodos
         if not extracted_text:
-            print(f"⚠️ No se encontró texto en {file_path}. Inspeccionando otros nodos posibles...")
-
             # Buscamos nodos adicionales que contengan texto
             for elem in root.iter():
                 node_text = extract_text_from_node(elem)
@@ -160,16 +155,19 @@ def load_documents(file_types=None) -> list[Document]:
     for root, dirs, files in os.walk(DATA_PATH):
         for file in files:
             try:
-                file_path = os.path.join(root, file)  # <--- Definir file_path aquí
                 content = ""
-                # Verificar si el archivo tiene un tipo soportado y en la lista de tipos solicitados
+                file_path = os.path.join(root, file)                  
+
                 if file_types:                
                     # Comprobar si el archivo tiene una de las extensiones solicitadas
                     if not any(file.lower().endswith(ext) for ext in file_types):
-                        continue  # Si no es del tipo solicitado, omitir archivo
+                        continue  
 
                 print(f"Procesando archivo: {file}")
-                # Leer el contenido según la extensión del archivo
+                modification_time = os.path.getmtime(file_path)
+                modification_date = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(modification_time))
+
+
                 if file.endswith('.pdf'):
                     content = read_pdf(file_path)
                 elif file.endswith('.doc'):
@@ -186,7 +184,11 @@ def load_documents(file_types=None) -> list[Document]:
 
                 # Crear un documento para agregarlo al proceso
                 if content:
-                    documents.append(Document(page_content=content, metadata={"source": file_path}))
+                    documents.append(Document(page_content=content, metadata={
+                        "source": file_path,
+                        "modification_date": modification_date,
+                        "file_name": file
+                        }))
                 else:
                     print(f"Error: El archivo {file_path} no tiene contenido válido.")
             except Exception as e:
@@ -198,7 +200,7 @@ def load_documents(file_types=None) -> list[Document]:
 
 # Función para dividir el texto en fragmentos más pequeños
 def split_text(documents: list[Document]) -> list[Document]:
-    print("Inicia splite")
+    #print("Inicia splite")
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200,
@@ -206,7 +208,7 @@ def split_text(documents: list[Document]) -> list[Document]:
         add_start_index=True
     )
     chunks = text_splitter.split_documents(documents)
-    print(f"Se dividieron {len(documents)} documentos en {len(chunks)} fragmentos.")
+    #print(f"Se dividieron {len(documents)} documentos en {len(chunks)} fragmentos.")
     return chunks
 
 # Función para guardar los fragmentos en Chroma
@@ -217,18 +219,12 @@ def save_to_chroma(chunks):
     for i in range(0, len(chunks), MAX_BATCH_SIZE):
         batch = chunks[i:i + MAX_BATCH_SIZE]
         db = Chroma.from_documents(batch, embedding_function, persist_directory=CHROMA_PATH)
-        db.persist()
-        print(f"Se guardaron {len(batch)} fragmentos en {CHROMA_PATH}.")
+        db.persist()       
 
 # Función principal para generar la base de datos
 def generate_data_store(file_types=None):
-    print(f"Buscando Documentos {str(datetime.now())}")
     documents = load_documents(file_types=file_types)
-    print(f"Documentos cargados {str(datetime.now())}")
-    print(f"Inicio de CHUNKING {str(datetime.now())}")
     chunks = split_text(documents)
-    print(f"Fin CHUNK {str(datetime.now())}")
-    print(f"Guardar en DB {str(datetime.now())}")
     save_to_chroma(chunks)
     print(f"Fin Guardar en DB {str(datetime.now())}")
 
