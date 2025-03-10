@@ -79,10 +79,8 @@ def load_documents(file_types=None) -> list[Document]:
     documents = []
     for root, dirs, files in os.walk(DATA_PATH):
         for file in files:
-            if file.endswith(('.~lock', '_bkp')):
-                continue  # Ignorar archivos de bloqueo o de respaldo
-            file_path = os.path.join(root, file)
             try:
+                file_path = os.path.join(root, file)  # <--- Definir file_path aquí
                 content = ""
                 # Verificar si el archivo tiene un tipo soportado y en la lista de tipos solicitados
                 if file_types:                
