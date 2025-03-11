@@ -212,14 +212,53 @@ def split_text(documents: list[Document]) -> list[Document]:
     return chunks
 
 # Función para guardar los fragmentos en Chroma
-def save_to_chroma(chunks):
-    if os.path.exists(CHROMA_PATH):
-        shutil.rmtree(CHROMA_PATH)
+def save_to_chromaOLD(chunks):
+    #if os.path.exists(CHROMA_PATH):
+    #    shutil.rmtree(CHROMA_PATH)
     embedding_function = OpenAIEmbeddings()
     for i in range(0, len(chunks), MAX_BATCH_SIZE):
         batch = chunks[i:i + MAX_BATCH_SIZE]
         db = Chroma.from_documents(batch, embedding_function, persist_directory=CHROMA_PATH)
-        db.persist()       
+        db.persist() 
+
+
+
+
+def save_to_chroma(chunks):
+    """
+    Guarda los fragmentos de texto en la base de datos Chroma de manera eficiente.
+    """
+    BATCH_SIZE = 100  # Tamaño del lote para inserciones en la base
+
+    # Eliminar el directorio existente para evitar datos obsoletos (opcional)
+    #if os.path.exists(CHROMA_PATH):
+    #    shutil.rmtree(CHROMA_PATH)
+
+    # Inicializar el modelo de embeddings
+    embedding_function = OpenAIEmbeddings()
+
+    # Crear la base de datos Chroma solo una vez
+    db = Chroma(embedding_function=embedding_function, persist_directory=CHROMA_PATH)
+
+    batch = []  # Lista para almacenar los fragmentos en lotes
+
+    for chunk in chunks:
+        # Crear documento con embeddings
+        batch.append(chunk)
+
+        # Cuando alcanzamos el tamaño del lote, insertamos en la base de datos
+        if len(batch) >= BATCH_SIZE:
+            db.add_documents(batch)
+            batch.clear()  # Limpiar el lote después de insertar
+
+    # Insertar los documentos restantes si quedaron fuera del último lote
+    if batch:
+        db.add_documents(batch)
+
+    # Persistimos todo al final para mejorar la eficiencia
+    db.persist()
+    print("Datos guardados en Chroma con éxito.")
+
 
 # Función principal para generar la base de datos
 def generate_data_store(file_types=None):
