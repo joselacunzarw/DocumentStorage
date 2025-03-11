@@ -195,6 +195,9 @@ def load_documents(file_types=None) -> list[Document]:
                 content = ""
                 file_path = os.path.join(root, file)     
                             
+                if file.startswith("~$"): 
+                    continue #Ignoro archivos temporales
+            
                 if archivo_existe(file):
                     print(f"El archivo {file} ya fue procesado, se omite.")
                     continue             
@@ -284,7 +287,6 @@ def save_to_chroma(chunks):
 
     # Persistimos todo al final para mejorar la eficiencia
     db.persist()
-    print("Datos guardados en Chroma con éxito.")
 
 
 # Función principal para generar la base de datos
