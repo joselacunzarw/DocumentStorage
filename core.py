@@ -15,14 +15,52 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import zipfile
 import xml.etree.ElementTree as ET
 import time
+import sqlite3
 
 # Variables globales
 EMBEDDING_MODEL_NAME = a_env_vars.EMBEDDING_MODEL_NAME
 DATA_PATH = a_env_vars.DATA_PATH
 CHROMA_PATH = a_env_vars.CHROMA_PATH
 MAX_BATCH_SIZE = 5461
-
+BATCH_SIZE = 100  # Tamaño del lote para inserciones en la base croma
 os.environ["OPENAI_API_KEY"] = a_env_vars.OPENAI_API_KEY
+
+
+# Crear la base de datos y la tabla si no existen
+def create_db():
+    conn = sqlite3.connect('archivos.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS archivos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT,
+            path TEXT,
+            fecha_modificacion TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# Verificar si el archivo ya está en la base de datos
+def archivo_existe(nombre):
+    conn = sqlite3.connect('archivos.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM archivos WHERE nombre = ?', (nombre,))
+    result = cursor.fetchone()
+    conn.close()
+    return result is not None
+
+# Insertar archivo en la base de datos
+def insertar_archivo(nombre, path, fecha_modificacion):
+    conn = sqlite3.connect('archivos.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO archivos (nombre, path, fecha_modificacion)
+        VALUES (?, ?, ?)
+    ''', (nombre, path, fecha_modificacion))
+    conn.commit()
+    conn.close()
+
 
 # Función de lectura para .doc
 def read_doc(file_path: str) -> str:
@@ -59,7 +97,6 @@ def read_docx(file_path: str) -> str:
     for paragraph in doc.paragraphs:
         text += paragraph.text + "\n"
     return text
-
 
 
 def extract_text_from_node(node):
@@ -156,10 +193,13 @@ def load_documents(file_types=None) -> list[Document]:
         for file in files:
             try:
                 content = ""
-                file_path = os.path.join(root, file)                  
+                file_path = os.path.join(root, file)     
+                            
+                if archivo_existe(file):
+                    print(f"El archivo {file} ya fue procesado, se omite.")
+                    continue             
 
                 if file_types:                
-                    # Comprobar si el archivo tiene una de las extensiones solicitadas
                     if not any(file.lower().endswith(ext) for ext in file_types):
                         continue  
 
@@ -188,19 +228,19 @@ def load_documents(file_types=None) -> list[Document]:
                         "source": file_path,
                         "modification_date": modification_date,
                         "file_name": file
-                        }))
+                        }))                                        
+                    insertar_archivo(file, file_path, modification_date)    
                 else:
                     print(f"Error: El archivo {file_path} no tiene contenido válido.")
             except Exception as e:
                 print(f"Error al procesar el archivo {file_path}: {e}. Se omitirá este archivo.")
-                continue  # Omitir el archivo y continuar con el siguiente
+                continue  
 
     print(f"Se cargaron {len(documents)} documentos.")
     return documents
 
 # Función para dividir el texto en fragmentos más pequeños
 def split_text(documents: list[Document]) -> list[Document]:
-    #print("Inicia splite")
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200,
@@ -211,24 +251,11 @@ def split_text(documents: list[Document]) -> list[Document]:
     #print(f"Se dividieron {len(documents)} documentos en {len(chunks)} fragmentos.")
     return chunks
 
-# Función para guardar los fragmentos en Chroma
-def save_to_chromaOLD(chunks):
-    #if os.path.exists(CHROMA_PATH):
-    #    shutil.rmtree(CHROMA_PATH)
-    embedding_function = OpenAIEmbeddings()
-    for i in range(0, len(chunks), MAX_BATCH_SIZE):
-        batch = chunks[i:i + MAX_BATCH_SIZE]
-        db = Chroma.from_documents(batch, embedding_function, persist_directory=CHROMA_PATH)
-        db.persist() 
-
-
-
 
 def save_to_chroma(chunks):
     """
     Guarda los fragmentos de texto en la base de datos Chroma de manera eficiente.
     """
-    BATCH_SIZE = 100  # Tamaño del lote para inserciones en la base
 
     # Eliminar el directorio existente para evitar datos obsoletos (opcional)
     #if os.path.exists(CHROMA_PATH):
@@ -268,7 +295,8 @@ def generate_data_store(file_types=None):
     print(f"Fin Guardar en DB {str(datetime.now())}")
 
 # Configuración de los parámetros de entrada con argparse
-if __name__ == "__main__":
+if __name__ == "__main__":    
+    create_db()# Crear la base de datos de documento procesados
     parser = argparse.ArgumentParser(description="Procesa documentos de diferentes formatos.")
     parser.add_argument('--formats', nargs='*', help="Especificar los formatos de archivo a procesar (por ejemplo: .odt .pdf .docx)")
 
