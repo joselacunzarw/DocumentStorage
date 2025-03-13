@@ -189,6 +189,8 @@ def read_txt(file_path: str) -> str:
 # Función para cargar documentos, procesando solo los tipos especificados
 def load_documents(file_types=None) -> list[Document]:
     documents = []
+    document_batch_size = 10  
+
     for root, dirs, files in os.walk(DATA_PATH):
         for file in files:
             try:
@@ -206,7 +208,7 @@ def load_documents(file_types=None) -> list[Document]:
                     if not any(file.lower().endswith(ext) for ext in file_types):
                         continue  
 
-                print(f"Procesando archivo: {file}")
+                print(f"Procesando archivo: {file_path}")
                 modification_time = os.path.getmtime(file_path)
                 modification_date = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(modification_time))
 
@@ -224,8 +226,7 @@ def load_documents(file_types=None) -> list[Document]:
                 else:
                     print(f"Formato de archivo no soportado: {file}")
                     continue
-
-                # Crear un documento para agregarlo al proceso
+                
                 if content:
                     documents.append(Document(page_content=content, metadata={
                         "source": file_path,
@@ -235,9 +236,22 @@ def load_documents(file_types=None) -> list[Document]:
                     insertar_archivo(file, file_path, modification_date)    
                 else:
                     print(f"Error: El archivo {file_path} no tiene contenido válido.")
+
+
+                if len(documents) >= document_batch_size:
+                    print(f"Procesando y guardando un lote de {document_batch_size} documentos...")
+                    chunks = split_text(documents)  
+                    save_to_chroma(chunks)  
+                    documents.clear()  
+    
             except Exception as e:
                 print(f"Error al procesar el archivo {file_path}: {e}. Se omitirá este archivo.")
                 continue  
+
+    if documents:
+        print(f"Procesando y guardando el último lote de {len(documents)} documentos...")
+        chunks = split_text(documents)
+        save_to_chroma(chunks)
 
     print(f"Se cargaron {len(documents)} documentos.")
     return documents
@@ -257,55 +271,39 @@ def split_text(documents: list[Document]) -> list[Document]:
 
 def save_to_chroma(chunks):
     """
-    Guarda los fragmentos de texto en la base de datos Chroma de manera eficiente.
+    Guardar fragmentos de texto en una base de datos vectorial Chroma.
+    Args:
+        chunks (list[Document]): Lista de fragmentos de texto a guardar.
     """
-
-    # Eliminar el directorio existente para evitar datos obsoletos (opcional)
+    # Eliminar cualquier base de datos Chroma existente
     #if os.path.exists(CHROMA_PATH):
     #    shutil.rmtree(CHROMA_PATH)
 
-    # Inicializar el modelo de embeddings
     embedding_function = OpenAIEmbeddings()
-
-    # Crear la base de datos Chroma solo una vez
-    db = Chroma(embedding_function=embedding_function, persist_directory=CHROMA_PATH)
-
-    batch = []  # Lista para almacenar los fragmentos en lotes
-
-    for chunk in chunks:
-        # Crear documento con embeddings
-        batch.append(chunk)
-
-        # Cuando alcanzamos el tamaño del lote, insertamos en la base de datos
-        if len(batch) >= BATCH_SIZE:
-            db.add_documents(batch)
-            batch.clear()  # Limpiar el lote después de insertar
-
-    # Insertar los documentos restantes si quedaron fuera del último lote
-    if batch:
-        db.add_documents(batch)
-
-    # Persistimos todo al final para mejorar la eficiencia
-    db.persist()
+    
+    # Procesar los fragmentos en lotes más pequeños
+    for i in range(0, len(chunks), MAX_BATCH_SIZE):
+        batch = chunks[i:i + MAX_BATCH_SIZE]
+        db = Chroma.from_documents(
+            batch,
+            embedding_function,
+            persist_directory=CHROMA_PATH
+        )
+        db.persist()
+        print(f"Se guardaron {len(batch)} fragmentos en {CHROMA_PATH}.")
 
 
-# Función principal para generar la base de datos
-def generate_data_store(file_types=None):
-    documents = load_documents(file_types=file_types)
-    chunks = split_text(documents)
-    save_to_chroma(chunks)
-    print(f"Fin Guardar en DB {str(datetime.now())}")
 
-# Configuración de los parámetros de entrada con argparse
+
+
 if __name__ == "__main__":    
-    create_db()# Crear la base de datos de documento procesados
     parser = argparse.ArgumentParser(description="Procesa documentos de diferentes formatos.")
     parser.add_argument('--formats', nargs='*', help="Especificar los formatos de archivo a procesar (por ejemplo: .odt .pdf .docx)")
-
     args = parser.parse_args()
+
+    create_db()# Crear la base de datos de documento procesados
     if args.formats:
-        formats = [ext.strip().lower() for ext in args.formats]  # Remover espacios y convertir a minúsculas
-        print(f"Formatos seleccionados: {formats}")
-        generate_data_store(file_types=formats)
+        formats = [ext.strip().lower() for ext in args.formats]  # Remover espacios y convertir a minúsculas   
+        documents = load_documents(file_types=formats)
     else:
-        generate_data_store()
+        documents = load_documents(file_types=None)
